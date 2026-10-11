@@ -97,6 +97,33 @@ function App() {
     setTheme(prev => (prev === 'dark' ? 'light' : 'dark'))
   }
 
+  const fetchWeatherFromOpenMeteo = async (cityName) => {
+    const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityName.trim())}&count=1&language=no&format=json`
+    const geoRes = await fetch(geoUrl)
+    if (!geoRes.ok) throw new Error(`Geocoding feila (${geoRes.status})`)
+    const geoData = await geoRes.json()
+
+    if (!geoData.results || geoData.results.length === 0) {
+      return { error: `Hallo, ikkje finn på plassa: ${cityName}` }
+    }
+
+    const plass = geoData.results[0]
+    const { latitude, longitude, name: plassnamn, country: land } = plass
+
+    const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,wind_speed_10m,weather_code`
+    const weatherRes = await fetch(weatherUrl)
+    if (!weatherRes.ok) throw new Error(`Vêr-API feila (${weatherRes.status})`)
+    const weatherData = await weatherRes.json()
+
+    return {
+      by: plassnamn,
+      land: land || '',
+      temperatur: weatherData.current?.temperature_2m,
+      vind: weatherData.current?.wind_speed_10m,
+      weatherCode: weatherData.current?.weather_code
+    }
+  }
+
   const fetchWeatherFor = async (cityName) => {
     if (!cityName || !cityName.trim()) return
 
@@ -104,16 +131,23 @@ function App() {
     setError('')
 
     try {
-      // Backend expects 'by' parameter: /api/weather?by=...
-      const response = await fetch(`/api/weather?by=${encodeURIComponent(cityName.trim())}`)
+      let data = null
+      try {
+        // Backend expects 'by' parameter: /api/weather?by=...
+        const response = await fetch(`/api/weather?by=${encodeURIComponent(cityName.trim())}`)
 
-      if (!response.ok) {
-        throw new Error(`Feil frå server (${response.status})`)
+        if (response.ok) {
+          data = await response.json()
+        } else {
+          // Fallback to direct client-side fetch if backend is not available (e.g., GitHub Pages)
+          data = await fetchWeatherFromOpenMeteo(cityName)
+        }
+      } catch (backendErr) {
+        // Fallback to direct client-side fetch on network error / static hosting
+        data = await fetchWeatherFromOpenMeteo(cityName)
       }
 
-      const data = await response.json()
-
-      // Backend returns "erreor" key if city was not found
+      // Backend returns "erreor" or "error" key if city was not found
       if (data.erreor || data.error) {
         setError(data.erreor || data.error)
         setWeatherData(null)
@@ -121,7 +155,7 @@ function App() {
         setWeatherData(data)
       }
     } catch (err) {
-      setError(err.message || 'Kunne ikkje hente vêrdata. Sjekk at serveren køyrer.')
+      setError(err.message || 'Kunne ikkje hente vêrdata.')
       setWeatherData(null)
     } finally {
       setLoading(false)
